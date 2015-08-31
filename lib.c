@@ -1,7 +1,7 @@
 #include <stdio.h>
-#include <stdint.h>
 #include <string.h>
 #include <inttypes.h>
+#include "lib.h"
 
 #define LANG_JAPANESE 0x201
 #define LANG_ENGLISH  0x202
@@ -10,64 +10,6 @@
 #define LANG_GERMAN   0x205
 #define LANG_KOREAN   0x206
 #define LANG_SPANISH  0x207
-
-typedef struct {     /* little endian */
-  uint32_t c;        /* characteristic */
-  uint32_t oid;      /* original trainer id number */
-  uint8_t  name[10]; /* Pokemon's nickname */
-  uint16_t lang;
-  uint8_t  oname[7]; /* original trainer id name.
-                      * The characters represented by each byte are determined
-                      * by proprietary character set. */
-  uint8_t  mark;     /* markings */
-  uint16_t chk;      /* check sum */
-  uint16_t _1;       /* unknown */
-  struct {           /* encrypted data */
-    struct {            /* growth */
-      uint16_t species;
-      uint16_t held;
-      uint32_t exp;
-      uint8_t  ppb;     /* power points bonuses */
-      uint8_t  friend;
-      uint16_t _1;
-    } g;
-    struct {            /* attack */
-      uint16_t mov[4];
-      uint8_t  pp[4];
-    } a;
-    struct {            /* effort values & conditions */
-      uint8_t  hp;
-      uint8_t  atk;     /* attack */
-      uint8_t  def;     /* defense */
-      uint8_t  spd;     /* speed */
-      uint8_t  satk;    /* special attack */
-      uint8_t  sdef;    /* special defense */
-      uint8_t  cool;    /* coolness */
-      uint8_t  beauty;  /* beauty */
-      uint8_t  cute;    /* cuteness */
-      uint8_t  smart;   /* smartness */
-      uint8_t  tough;   /* toughness */
-      uint8_t  feel;    /* feel */
-    } e;
-    struct {            /* miscellaneous */
-      uint8_t  virus;   /* pokemon virus status */
-      uint8_t  met;     /* met location */
-      uint16_t ori;     /* origin info */
-      uint32_t iv;
-      uint32_t r;
-    } m;
-  } dat;
-  uint32_t stat;     /* status condition */
-  uint8_t  lv;
-  uint8_t  remain;
-  uint16_t hp;       /* current health point */
-  uint16_t thp;      /* total health point */
-  uint16_t atk;      /* attack */
-  uint16_t def;      /* defense */
-  uint16_t spd;      /* speed */
-  uint16_t satk;     /* special attack */
-  uint16_t sdef;     /* special defense */
-} mon_t;
 
 void
 mxor(mon_t * mon) {
@@ -139,11 +81,11 @@ mhexshow(mon_t * mon) {
   printf("friend:                 %" PRIu8 "\n",  mon->dat.g.friend);
   printf("_unknown:               0x%04X\n",      mon->dat.g._1);
   for (i = 0; i < LEN(mon->dat.a.mov); i++)
-    printf("move %zu:                 0x%04X\n",
-           i + 1,                                 mon->dat.a.mov[i]);
+    printf("move %" PRIuPTR ":"
+           "                 0x%04X\n", i + 1,    mon->dat.a.mov[i]);
   for (i = 0; i < LEN(mon->dat.a.pp); i++)
-    printf("power points %zu:         %" PRIu8 "\n",
-           i + 1,                                 mon->dat.a.pp[i]);
+    printf("power points %" PRIuPTR ":"
+           "         %" PRIu8 "\n",     i + 1,    mon->dat.a.pp[i]);
   printf("effort health points:   %" PRIu8 "\n",  mon->dat.e.hp);
   printf("effort attack:          %" PRIu8 "\n",  mon->dat.e.atk);
   printf("effort defense:         %" PRIu8 "\n",  mon->dat.e.def);
@@ -193,4 +135,32 @@ mtest(void) {
   memcpy(&mon, src, sizeof(src));
   mdec(&mon);
   mhexshow(&mon);
+}
+
+#define VDIRECT  0
+#define VPOINTER 1
+
+vref_t *
+getref(void) {
+  static vref_t ref = {
+    .rs_jp = {
+      .mon = {VDIRECT, (void *) 0x03004290}
+    },
+    .rs_en = {
+      .mon = {VDIRECT, (void *) 0x03004360}
+    },
+    .fl_jp = {
+      .mon = {VDIRECT, (void *) 0x020241E4}
+    },
+    .fl_en = {
+      .mon = {VDIRECT, (void *) 0x02024284}
+    },
+    .e_jp = {
+      .mon = {VDIRECT, (void *) 0x02024190}
+    },
+    .e_en = {
+      .mon = {VDIRECT, (void *) 0x020244EC}
+    }
+  };
+  return &ref;
 }

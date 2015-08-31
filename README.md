@@ -1,13 +1,11 @@
-# Setup
+# Installation
+
+Unix / Linux
 
     $ cmake .
-
-Unix / Linux 
-
-    $ make main
+    $ make
     $ ./main
 
 Windows
 
-    $ make win
     $ ./win
