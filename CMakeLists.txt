@@ -22,3 +22,4 @@ set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
 set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
 
 add_executable(win.exe win.c lib.c)
+target_link_libraries(win.exe wsock32 ws2_32)

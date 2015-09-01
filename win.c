@@ -1,8 +1,20 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <inttypes.h>
+#include <signal.h>
+#ifdef __WIN32__
+  #include <winsock2.h>
+  #include <ws2tcpip.h>
+#else
+  #include <netdb.h>
+  #include <sys/socket.h>
+#endif
 #include <windows.h>
 #include "lib.h"
+
+typedef struct sockaddr         addr_t;
+typedef struct sockaddr_storage addr_store_t;
+typedef struct addrinfo         addr_info_t;
 
 uint32_t
 getpid(int argc, char ** argv) {
@@ -79,8 +91,8 @@ getvba(void * phd) {
       CloseHandle(phd);
       exit(1);
     }
-    printf("read 0x%08X-0x%08X from process\n",
-           VPTR + total, VPTR + total + read);
+    /*printf("read 0x%08X-0x%08X from process\n",
+           VPTR + total, VPTR + total + read);*/
     total += read;
   }
   for (i = 0; i < VLEN - sizeof(vdat_t); i += sizeof(uint32_t)) {
@@ -103,7 +115,7 @@ getvba(void * phd) {
     CloseHandle(phd);
     exit(1);
   }
-  vshow(&ret);
+  /*vshow(&ret);*/
   return ret;
 }
 
@@ -112,7 +124,7 @@ vtran(void * from, vdat_t * vba) {
   size_t index  = ((size_t) from & 0x0F000000) >> 24,
          offset = ((size_t) from & 0x00FFFFFF);
   void * to = index[(vent_t *) vba].addr + offset;
-  printf("translate address 0x%08X to 0x%08X\n", from, to);
+  /*printf("translate address 0x%08X to 0x%08X\n", from, to);*/
   return to;
 }
 
@@ -125,31 +137,34 @@ vrecv(void * addr, void * buf, size_t len, vdat_t * vba, void * phd) {
     CloseHandle(phd);
     exit(1);
   }
-  printf("read 0x%08X from process\n", addr);
+  /*printf("read 0x%08X from process\n", addr);*/
 }
 
 void
 vsend(void * addr, void * buf, size_t len, vdat_t * vba, void * phd) {
   SIZE_T wrote;
   addr = vtran(addr, vba);
-  int ret = WriteProcessMemory(phd, addr, buf, len, &wrote);
-  if (!ret || wrote < len) {
-    printf("ret %d. write 0x%08X (len = %"PRIuPTR" from process failed\n",
-           ret, addr, wrote);
+  if (!WriteProcessMemory(phd, addr, buf, len, &wrote) || wrote < len) {
+    printf("write 0x%08X from process failed\n", addr);
     CloseHandle(phd);
     exit(1);
   }
-  printf("write 0x%08X from process\n", addr);
+  /*printf("write 0x%08X from process\n", addr);*/
 }
 
 #define MLEN 6
+#define MSIZE (MLEN * sizeof(mon_t))
 
 mon_t *
-getmon(vref_t * ref, vdat_t * vba, void * phd) {
-  size_t size = MLEN * sizeof(mon_t);
-  mon_t * mon = malloc(size);
-  vrecv(ref->e_jp.mon.addr, mon, size, vba, phd);
+mrecv(vref_t * ref, vdat_t * vba, void * phd) {
+  mon_t * mon = malloc(MSIZE);
+  vrecv(ref->e_jp.mon.addr, mon, MSIZE, vba, phd);
   return mon;
+}
+
+void
+msend(mon_t * mon, vref_t * ref, vdat_t * vba, void * phd) {
+  vsend(ref->e_jp.mon.addr, mon, MSIZE, vba, phd);
 }
 
 void
@@ -164,17 +179,144 @@ getmap(vdat_t * vba, void * phd) {
   }
 }
 
+void setintr(void);
+void getintr(int signo);
+
+void
+setintr(void) {
+  void (* sig)(int);
+  sig = signal(SIGINT, getintr);
+  if (sig == SIG_ERR) puts("cannot catch SIGINT"), fflush(stdout);
+  sig = signal(SIGTERM, getintr);
+  if (sig == SIG_ERR) puts("cannot catch SIGINT"), fflush(stdout);
+}
+
+int intr = 0;
+int gsock;
+
+void
+getintr(int signo) {
+  puts("bye");
+  fflush(stdout);
+  intr = 1;
+#ifdef __WIN32__
+  closesocket(gsock);
+#else
+  close(gsock);
+#endif
+  setintr();
+}
+
+addr_info_t *
+getaddr(void) {
+  addr_info_t hint = {0}, * res;
+  hint.ai_family = AF_UNSPEC;
+  hint.ai_socktype = SOCK_STREAM;
+  hint.ai_flags = AI_PASSIVE;
+  getaddrinfo(NULL, "45000", &hint, &res);
+  return res;
+}
+
+int
+getsock(addr_info_t * addr) {
+  int sock = socket(addr->ai_family, addr->ai_socktype, addr->ai_protocol);
+  if (sock == -1) puts("socket failed"), exit(1);
+  return sock;
+}
+
+int
+setsock(void) {
+  addr_info_t * addr = getaddr();
+  int sock = getsock(addr), on = 1, ret;
+  ret = setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, (void *) &on, sizeof(on));
+  if (ret == -1) puts("setsockopt 'SO_REUSEADDR' failed"), exit(1);
+  if (addr->ai_addr->sa_family == AF_INET6) {
+    ret = setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &on, sizeof(on));
+    if (ret == -1) puts("setsockopt 'IPV6_V6ONLY' failed"), exit(1);
+  }
+  ret = bind(sock, addr->ai_addr, addr->ai_addrlen);
+  if (ret == -1) puts("bind failed"), exit(1);
+  ret = listen(sock, 20);
+  if (ret == -1) puts("listen failed"), exit(1);
+  freeaddrinfo(addr);
+  return sock;
+}
+
+int
+rcvsock(int new, void * buf, size_t len) {
+  ssize_t ret = recv(new, buf, len, 0);
+  if (ret == 0)   { puts("disconnect"),  fflush(stdout); return 1; }
+  if (ret == -1)  { puts("recv failed"), fflush(stdout); return 1; }
+  if (ret != len) { puts("recv error"),  fflush(stdout); return 1; }
+  return 0;
+}
+
+void
+sndsock(int new, void * buf, size_t len) {
+  ssize_t ret = send(new, buf, len, 0);
+  if (ret == -1)  puts("send failed"), fflush(stdout);
+  if (ret != len) puts("send failed"), fflush(stdout);
+}
+
+#define EXEQUIT  0
+#define EXEMONLV 1
+#define EXEMONPP 2
+
+void
+exesock(int new, vdat_t * vba, void * phd, vref_t * ref) {
+  mon_t * mon;
+  uint8_t cmd;
+  while (!rcvsock(new, &cmd, sizeof(cmd))) {
+    if (cmd == EXEQUIT) {
+      puts("disconnect"), fflush(stdout); break;
+    }
+    if (mdec(mon = mrecv(ref, vba, phd))) {
+      puts("not valid mon_t"), fflush(stdout), free(mon); break;
+    }
+    if (cmd == EXEMONLV)
+      sndsock(new, &mon->lv, sizeof(mon->lv));
+    if (cmd == EXEMONPP) {
+      mon->dat.a.pp[0] = 5;
+      sndsock(new, mon->dat.a.pp, sizeof(* mon->dat.a.pp));
+      menc(mon), msend(mon, ref, vba, phd);
+    }
+    free(mon);
+  }
+}
+
+void
+accsock(vdat_t * vba, void * phd, vref_t * ref) {
+  socklen_t addrlen;
+  addr_store_t addr;
+  int sock, new;
+#ifdef __WIN32__
+  WSADATA wsa;
+  if (WSAStartup(MAKEWORD(2, 2), &wsa))
+    puts("WSAStartup failed"), fflush(stdout), exit(0);
+#endif
+  sock = gsock = setsock();
+  while (!intr) {
+    addrlen = sizeof(addr);
+    memset(&addr, 0, addrlen);
+    new = accept(sock, (addr_t *) &addr, &addrlen);
+    if (new == -1 && !intr) puts("accept failed"), fflush(stdout);
+    if (new == -1) continue;
+    exesock(new, vba, phd, ref);
+    close(new);
+  }
+#ifdef __WIN32__
+  WSACleanup();
+#endif
+}
+
 int
 main(int argc, char ** argv) {
   vref_t * ref = getref();
   uint32_t pid = getpid(argc, argv);
   void *   phd = getphd(pid);
   vdat_t   vba = getvba(phd);
-  mon_t *  mon = getmon(ref, &vba, phd);
-  mdec(mon);
-  mhexshow(mon);
-  free(mon);
-  getmap(&vba, phd);
+  setintr();
+  accsock(&vba, phd, ref);
   CloseHandle(phd);
   return 0;
 }

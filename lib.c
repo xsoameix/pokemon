@@ -49,11 +49,28 @@ mreo(mon_t * mon, int set) { /* reorder */
   mon->dat = ret.dat;
 }
 
-void
-mdec(mon_t * mon) { mxor(mon), mreo(mon, 0); }
+uint16_t
+mchk(mon_t * mon) {
+  uint16_t chk = 0;
+  size_t i;
+  for (i = 0; i < sizeof(mon->dat)/sizeof(uint16_t); i++)
+    chk += i[(uint16_t *) &mon->dat];
+  return chk;
+}
+
+int
+mdec(mon_t * mon) {
+  mxor(mon);
+  mreo(mon, 0);
+  return mon->chk != mchk(mon);
+}
 
 void
-menc(mon_t * mon) { mreo(mon, 1), mxor(mon); }
+menc(mon_t * mon) {
+  mon->chk = mchk(mon);
+  mreo(mon, 1);
+  mxor(mon);
+}
 
 #define LEN(field) (sizeof(field) / sizeof(* field))
 

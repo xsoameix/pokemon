@@ -61,10 +61,11 @@ typedef struct {     /* little endian */
   uint16_t sdef;     /* special defense */
 } mon_t;
 
-void mdec(mon_t * mon);
-void menc(mon_t * mon);
-void mhexshow(mon_t * mon);
-void mtest(void);
+uint16_t mchk(mon_t * mon);
+int      mdec(mon_t * mon);
+void     menc(mon_t * mon);
+void     mhexshow(mon_t * mon);
+void     mtest(void);
 
 typedef struct {
   int type;
